@@ -24,49 +24,82 @@ This provides the lane line segments.  In order to extrapolate the lane lines in
 ```
 for line in lines:
 	for x1,y1,x2,y2 in line:
-    	rise = y2-y1
-        run = x2-x1
-        slope= float(rise)/run
+    	slope = (y2 - y1)/float(x2-x1)
 ```
 
-Then the topmost (i.e. closest to the top of the image) line segment of each lane is extracted along with its slope like so.  Note that only the lines with slopes in an acceptable range are considered to minimize false positives.
+Then the coordinates of all lines for each lane are accumulated in order to be averaged later.
 ```
-#right lane
-if slope>0.0 and slope < 1.0:            
-	if y1 < topmost_right_x1y1[1]:
-    	topmost_right_x1y1=(x1,y1) 
-        topmost_right_slope=slope
-                    
-#left lane
-elif slope < 0.0 and slope > -1.0:
-	if y1 < topmost_left_x1y1[1]:
-    	topmost_left_x1y1=(x1,y1)
-        topmost_left_slope=slope
+    right_x1s=[]
+    right_x2s=[]
+    right_y1s=[]
+    right_y2s=[]
+    
+    left_x1s=[]
+    left_x2s=[]
+    left_y1s=[]
+    left_y2s=[]
+    
+    if lines is not None and len(lines)>0:
+        for line in lines:
+            for x1,y1,x2,y2 in line:
+            
+                slope = (y2 - y1)/float(x2-x1)
+           
+                #if the slope is positive its the left lane, if its negative it is the right, if its zero then ignore it
+                if slope >0.0:
+                    left_x1s.append(x1)
+                    left_x2s.append(x2)
+                    left_y1s.append(y1)
+                    left_y2s.append(y2)
+                
+                elif slope < 0.0:
+                
+                    right_x1s.append(x1)
+                    right_x2s.append(x2)
+                    right_y1s.append(y1)
+                    right_y2s.append(y2)  
+```
+Then the average line for each lane is calculated along with its average slope
+
+```
+            left_x1_avg=np.mean(left_x1s)
+            left_x2_avg=np.mean(left_x2s)
+            left_y1_avg=np.mean(left_y1s)
+            left_y2_avg=np.mean(left_y2s)
+    
+            right_x1_avg=np.mean(right_x1s)
+            right_x2_avg=np.mean(right_x2s)
+            right_y1_avg=np.mean(right_y1s)
+            right_y2_avg=np.mean(right_y2s)
+
+            avg_left_slope = (left_y2_avg - left_y1_avg) / (left_x2_avg - left_x1_avg)
+            avg_right_slope = (right_y2_avg - right_y1_avg) / (right_x2_avg - right_x1_avg)
+```
+Then the average line is extrapolated downwards to the bottom of the image (`y = 960`) using the formula for slope.  Specifically, `x1`,`y1`, `y2`, and the slope are known and we solve for `x2`.  We do this for both lanes.
+```
+            new_left_x2= (960 - left_y1_avg+left_x1_avg*avg_left_slope) / avg_left_slope
+            new_right_x2 = (960 - right_y1_avg+right_x1_avg*avg_right_slope) / avg_right_slope
+```
+Then we do the same thing and extrapolate upwards to `y=350` which is approximately the center of the image.
+```
+            new_left_x1 = -(left_y1_avg - 350 - left_x1_avg*avg_left_slope)/avg_left_slope
+            new_right_x1 = -(right_y1_avg - 350 - right_x1_avg*avg_right_slope)/avg_right_slope
 ```
 
-Then, given the top-most point recorded and the corresponding slope, the line is extrapolated downwards towards the bottom of the image.  This is done using the equation for slope where the top point of the line , the slope and the bottom y coordinate (i.e. the height of the image) is known and the bottom x coordinate is solved for.  This was calculated by
-
+Then finally the extrapolated lines are drawn
 ```
-#calculate the bottom most point for each line
-bottom_right_x2 = (imshape[1] - topmost_right_x1y1[1] + topmost_right_x1y1[0]*topmost_right_slope)/float(topmost_right_slope)
-bottom_left_x2 = (imshape[1] - topmost_left_x1y1[1] + topmost_left_x1y1[0]*topmost_left_slope)/float(topmost_left_slope)
-```
-
-Finally, both extrapolated lines are drawn by using the topmost lines as the starting points and the extrapolated endpoints.
-```
-#draw lane lines on image  
-cv2.line(img,topmost_right_x1y1,(int(bottom_right_x2),imshape[1]),color,thickness)
-cv2.line(img,topmost_left_x1y1,(int(bottom_left_x2),imshape[1]),color,thickness)
+            cv2.line(img,(int(new_left_x1),350),(int(new_left_x2),960),color,thickness)
+            cv2.line(img,(int(new_right_x1),350),(int(new_right_x2),960),color,thickness)
 ```
 
 #2.
-The largest shortcoming of my implementation is the mask and Hough parameters are such that the topmost lines found sometimes do not correspond to lanes (rather they belong to other objects like cars).  As a result, the extrapolated lines would also be incorrect.  This could potentially be fixed by tuning these parameters better but this would take more time than I have available at the moment.  
+One shortcoming with my implementation is that the endpoint for the upwards extrapolation is hardcoded rather than learned in a more rigorous way. Also, it is likely that the Hough and mask parameter tuning can be improved.
 
-There are also a few shortcomings associated with this approach in general.  First, this approach can only detect straight lines so it would fail for a curved lane (i.e. a turn).  Second, I suspect that if the car is going uphill or downhill the region in the camera associated with the lane would change (i.e. it would get larger going uphill and smaller going downhill) - therefore the mask would have to be adjested in these cases.
+There are also a few shortcomings associated with this approach in general.  First, this approach can only detect straight lines so it would fail for a curved lane (i.e. a turn).  Second, I suspect that if the car is going uphill or downhill the region in the camera associated with the lane would change (i.e. it would get larger going uphill and smaller going downhill) - therefore the mask would have to be adjusted in these cases.
 
 #3.
 As stated earlier this pipeline would be improved by better tuned Hough and mask parameters but this would take more time than I have available at the moment.  
 
-Another Idea I had is the following. In most cases, a stiped lane would have at least 2 lines segments with the same slope (assuming it is not a curved lane).  I could have minimized false positives by only looking at segments that have at least one other segment with the same slope.  This way other lines not associated with lanes could have been filtered out.
+It could also be improved by being able to detect curved lines for curved lanes.  It would also be improved by dynamically changing the mask region while going up or downhill.
 
 
